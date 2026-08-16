@@ -190,6 +190,21 @@ const HOME=[minX-PAD,minY-PAD,(maxX-minX)+2*PAD,(maxY-minY)+2*PAD];
 let vb=HOME.slice();
 const svg=$("#map");
 function applyVB(){svg.setAttribute("viewBox",vb.join(" "))}
+// units-per-CSS-pixel at the current zoom: sizes below are given in screen px
+// and converted so marks/labels keep constant screen size while geography scales
+function uPx(){const r=svg.getBoundingClientRect();return vb[2]/(r.width||1000)}
+function restyle(){
+  const u=uPx();
+  document.querySelectorAll("#map text[data-px]").forEach(t=>t.setAttribute("font-size",(+t.dataset.px*u).toFixed(5)));
+  document.querySelectorAll("#map [data-pxsw]").forEach(t=>t.setAttribute("stroke-width",(+t.dataset.pxsw*u).toFixed(5)));
+  const lc=document.getElementById("lcmark");
+  if(lc){const s=+lc.dataset.pxs*u;
+    lc.setAttribute("x",lc.dataset.cx-s/2);lc.setAttribute("y",lc.dataset.cy-s/2);
+    lc.setAttribute("width",s);lc.setAttribute("height",s);}
+  const lt=document.getElementById("lclabel");
+  if(lt)lt.setAttribute("y",+lt.dataset.cy + 22*u);
+  drawDots();
+}
 
 // ---------- static layers ----------
 const NS="http://www.w3.org/2000/svg";
@@ -206,7 +221,7 @@ DATA.counties.features.forEach(f=>{
   // county label at centroid of first ring
   const ring=(f.geometry.type==="Polygon"?f.geometry.coordinates:f.geometry.coordinates[0])[0];
   const cx=ring.reduce((a,c)=>a+px(c[0]),0)/ring.length, cy=ring.reduce((a,c)=>a+py(c[1]),0)/ring.length;
-  const t=el("text",{x:cx,y:cy,fill:"var(--ink3)","text-anchor":"middle","font-size":"0.045"},gCounty);
+  const t=el("text",{x:cx,y:cy,fill:"var(--ink3)","text-anchor":"middle","data-px":"19"},gCounty);
   t.textContent=f.properties.county.toUpperCase();
   t.setAttribute("style","letter-spacing:.01em;opacity:.55;pointer-events:none");
 });
@@ -225,8 +240,8 @@ if(DATA.roads){
   (DATA.roads.labels||[]).forEach(l=>{
     let ref=(l.ref in RENAME)?RENAME[l.ref]:l.ref;
     if(!ref)return;
-    const t=el("text",{x:px(l.x),y:py(l.y),fill:"var(--roadlbl)","text-anchor":"middle","font-size":"0.016",
-      stroke:"var(--panel2)","stroke-width":"0.004","paint-order":"stroke"},gRoadLbl);
+    const t=el("text",{x:px(l.x),y:py(l.y),fill:"var(--roadlbl)","text-anchor":"middle","data-px":"11",
+      stroke:"var(--panel2)","data-pxsw":"3","paint-order":"stroke"},gRoadLbl);
     t.textContent=ref;
     t.setAttribute("style","pointer-events:none;letter-spacing:.02em");
   });
@@ -238,23 +253,25 @@ if(DATA.lc.lat){
   [5,10,20].forEach(mi=>{
     el("circle",{cx,cy,r:mi/69,fill:"none",stroke:"var(--ring)","stroke-dasharray":"0.008 0.008"},gRings)
       .setAttribute("style","stroke-width:1px;vector-effect:non-scaling-stroke");
-    const lb=el("text",{x:cx,y:cy-mi/69-0.004,fill:"var(--ink3)","text-anchor":"middle","font-size":"0.018"},gRings);
+    const lb=el("text",{x:cx,y:cy-mi/69-0.004,fill:"var(--ink3)","text-anchor":"middle","data-px":"11"},gRings);
     lb.textContent=mi+" mi";
     lb.setAttribute("style","pointer-events:none;opacity:.8");
   });
-  el("rect",{x:cx-0.009,y:cy-0.009,width:0.018,height:0.018,fill:"var(--green)",transform:`rotate(45 ${cx} ${cy})`,stroke:"var(--surface)"},gLC)
+  el("rect",{id:"lcmark","data-cx":cx,"data-cy":cy,"data-pxs":"15",x:cx,y:cy,width:0,height:0,
+    fill:"var(--green)",transform:`rotate(45 ${cx} ${cy})`,stroke:"var(--surface)"},gLC)
     .setAttribute("style","stroke-width:1.5px;vector-effect:non-scaling-stroke");
-  const t=el("text",{x:cx,y:cy+0.032,fill:"var(--green)","text-anchor":"middle","font-size":"0.022","font-weight":"bold"},gLC);
+  const t=el("text",{id:"lclabel",x:cx,y:cy,"data-cy":cy,fill:"var(--green)","text-anchor":"middle","data-px":"12","font-weight":"bold"},gLC);
   t.textContent="LOVE CROISSANTS";
-  t.setAttribute("style","pointer-events:none");
+  t.setAttribute("style","pointer-events:none;letter-spacing:.04em");
 }
 
 // ---------- dots ----------
+// radii in SCREEN pixels; converted to map units per draw so zoom adds separation
 function dotR(s){
-  if(isAccount(s)) return 0.0115+Math.min(0.006,(s.acct||1)*0.0004);
-  if(s.fit>=5) return 0.010;
-  if(s.fit>=4) return 0.0085;
-  return 0.007;
+  if(isAccount(s)) return 7+Math.min(4,(s.acct||1)*0.3);
+  if(s.fit>=5) return 5.5;
+  if(s.fit>=4) return 4.5;
+  return 3.5;
 }
 function visible(s){
   if(state.counties.size && !state.counties.has(s.county)) return false;
@@ -271,11 +288,12 @@ function visible(s){
 }
 function drawDots(){
   gDots.innerHTML="";
+  const u=uPx();
   const vis=shops.filter(visible);
   // draw prospects lowest-fit first so hot ones sit on top; accounts last
   vis.sort((a,b)=>(isAccount(a)||a.account_only?1:0)-(isAccount(b)||b.account_only?1:0)||(a.fit-b.fit));
   vis.forEach(s=>{
-    const cx=px(s.lon),cy=py(s.lat),r=dotR(s);
+    const cx=px(s.lon),cy=py(s.lat),r=dotR(s)*u;
     let node;
     if(isNonCoffee(s)){
       node=el("rect",{x:cx-r*0.9,y:cy-r*0.9,width:r*1.8,height:r*1.8,fill:isLapsed(s)?"none":"var(--green)",
@@ -293,11 +311,12 @@ function drawDots(){
       node.setAttribute("style","stroke-width:1px;vector-effect:non-scaling-stroke");
     }
     node.setAttribute("data-id",s._id);
-    node.setAttribute("tabindex","-1");
     if(state.sel===s._id){
       el("circle",{cx,cy,r:r*1.9,fill:"none",stroke:"var(--sel)"},gDots)
         .setAttribute("style","stroke-width:1.6px;vector-effect:non-scaling-stroke;pointer-events:none");
     }
+    // enlarged invisible hit target for hover/tap
+    el("circle",{cx,cy,r:Math.max(dotR(s),9)*u,fill:"transparent","data-id":s._id},gDots);
   });
   renderList(vis);
 }
@@ -359,7 +378,7 @@ function select(id){
 function renderList(vis){
   const pros=vis.filter(s=>isProspect(s)&&s.fit>=2).sort((a,b)=>b.fit-a.fit||( (b.current_supplier?1:0)-(a.current_supplier?1:0) )||a.name.localeCompare(b.name));
   $("#listcount").textContent=`(${pros.length} shown)`;
-  $("#list").innerHTML=pros.map(s=>`<li data-id="${s._id}">
+  $("#list").innerHTML=pros.map(s=>`<li data-id="${s._id}"${s._id===state.sel?' class="sel"':''}>
     <div class="nm"><span>${esc(s.name)}</span><span class="pill fit${s.fit}" style="align-self:flex-start">${s.fit}</span></div>
     <div class="where">${esc(s.neighborhood||s.city||"")}${s.county?" · "+esc(s.county):""}${s.units>1?" · "+s.units+" units":""}</div>
     <div class="why">${esc((s.pastry_source||"unknown").replace("_"," "))}${s.current_supplier?" · displacing "+esc(s.current_supplier):""}</div>
@@ -416,12 +435,13 @@ function methodology(){
 function zoom(f,cx,cy){
   const [x,y,w,h]=vb;
   cx=cx??x+w/2;cy=cy??y+h/2;
-  const nw=Math.max(0.02,Math.min(HOME[2]*1.4,w*f)),nh=nw*(h/w);
-  vb=[cx-(cx-x)*(nw/w),cy-(cy-y)*(nh/h),nw,nh];applyVB();
+  const nw=Math.max(0.012,Math.min(HOME[2]*1.4,w*f)),nh=nw*(h/w);
+  vb=[cx-(cx-x)*(nw/w),cy-(cy-y)*(nh/h),nw,nh];applyVB();restyle();
 }
 $("#zin").addEventListener("click",()=>zoom(0.7));
 $("#zout").addEventListener("click",()=>zoom(1.45));
-$("#zreset").addEventListener("click",()=>{vb=HOME.slice();applyVB();});
+$("#zreset").addEventListener("click",()=>{vb=HOME.slice();applyVB();restyle();});
+window.addEventListener("resize",()=>restyle());
 svg.addEventListener("wheel",e=>{
   e.preventDefault();
   const r=svg.getBoundingClientRect();
@@ -441,5 +461,6 @@ svg.addEventListener("pointermove",e=>{
 applyVB();kpis();legend();methodology();render();
 // initial zoom: frame Harris core loosely
 if(DATA.lc.lat){vb=[px(DATA.lc.lon)-0.55,py(DATA.lc.lat)-0.42,1.1,0.84];applyVB();}
+restyle();
 </script>
 </body></html>
